@@ -10,59 +10,57 @@ type Scanner struct {
 	x, y, units, xStep, yStep float64
 	v, a                      float64
 	relative, tubeOn          bool
+	filter map[string]func(string) (byte, byte, bool)
 }
 
-var filter map[string]func(string) (byte, byte, bool)
-var context Scanner
-
-func setup() {
-	filter = make(map[string]func(string) (byte, byte, bool))
-	filter["X"] = func(str string) (byte, byte, bool) {
+func (ctx *Scanner) Setup() {
+	ctx.filter = make(map[string]func(string) (byte, byte, bool))
+	ctx.filter["X"] = func(str string) (byte, byte, bool) {
 		tmp, error := strconv.ParseFloat(str, 64)
 		if error != nil {
 			panic("not a number")
 		}
-		tmp *= context.units * context.xStep
-		if context.relative {
-			context.x += tmp
+		tmp *= ctx.units * ctx.xStep
+		if ctx.relative {
+			ctx.x += tmp
 		} else {
-			context.x = tmp
+			ctx.x = tmp
 		}
-		return uint8(context.x / 256), uint8(context.x), true
+		return uint8(ctx.x / 256), uint8(ctx.x), true
 	}
-	filter["Y"] = func(str string) (byte, byte, bool) {
+	ctx.filter["Y"] = func(str string) (byte, byte, bool) {
 		tmp, error := strconv.ParseFloat(str, 64)
 		if error != nil {
 			panic("not a number")
 		}
-		tmp *= context.yStep
-		if context.relative {
-			context.y += tmp
+		tmp *= ctx.yStep
+		if ctx.relative {
+			ctx.y += tmp
 		} else {
-			context.y = tmp
+			ctx.y = tmp
 		}
-		return uint8(context.y / 256), uint8(context.y), true
+		return uint8(ctx.y / 256), uint8(ctx.y), true
 	}
-	filter["S"] = func(str string) (byte, byte, bool) {
+	ctx.filter["S"] = func(str string) (byte, byte, bool) {
 		tmp, error := strconv.ParseInt(str, 10, 16)
 		if error != nil {
 			panic("not a number")
 		}
 		return uint8(tmp / 256), uint8(tmp), true
 	}
-	filter["M"] = filter["S"]
-	filter["V"] = func(str string) (byte, byte, bool) {
+	ctx.filter["M"] = ctx.filter["S"]
+	ctx.filter["V"] = func(str string) (byte, byte, bool) {
 		tmp, error := strconv.ParseFloat(str, 64)
-		context.v = tmp
+		ctx.v = tmp
 		if error != nil {
 			panic("not a number")
 		}
 		tmp *= 100
 		return uint8(tmp / 256), uint8(tmp), true
 	}
-	filter["A"] = func(str string) (byte, byte, bool) {
+	ctx.filter["A"] = func(str string) (byte, byte, bool) {
 		tmp, error := strconv.ParseFloat(str, 64)
-		context.a = tmp
+		ctx.a = tmp
 		if error != nil {
 			panic("not a number")
 		}
@@ -70,57 +68,58 @@ func setup() {
 		return uint8(tmp / 256), uint8(tmp), true
 	}
 
-	context.xStep = 100
-	context.yStep = 10
-	context.units = 1
+	ctx.xStep = 100
+	ctx.yStep = 10
+	ctx.units = 1
 }
 func main() {
-	setup()
-
-	fmt.Println(execute("G0 X1.4 Y1.2123")) //move to 1.4 1.2123
-	fmt.Println(execute("G91"))             //set relative
-	fmt.Println(execute("G0 X1.4"))         //move to 2.8 1.2123
+  ctx := new(Scanner)
+	ctx.Setup()
+  
+	fmt.Println(ctx.Execute("G0 X1.4 Y1.2123")) //move to 1.4 1.2123
+	fmt.Println(ctx.Execute("G91"))             //set relative
+	fmt.Println(ctx.Execute("G0 X1.4"))         //move to 2.8 1.2123
 }
-func execute(line string) []byte {
+func (ctx *Scanner) Execute(line string) []byte { //[length,flags << 4 + code,args ...]
 	tokens := strings.Split(line, " ")
 	switch tokens[0] {
-	case "G0", "G1":
-		return compile([]string{"Y", "X"}, 1, tokens, filter)
-	case "G4":
-		return compile([]string{"S", "M"}, 3, tokens, filter)
-	case "G20":
-		setScale(2.6)
-	case "G21":
-		setScale(1.0)
-	case "G90":
-		setRelative(false)
-	case "G91":
-		setRelative(true)
-	case "M0":
+	case "G0", "G1": //Move to
+		return compile([]string{"Y", "X"}, 1, tokens, ctx.filter)
+	case "G4":  //Dwell
+		return compile([]string{"S", "M"}, 3, tokens, ctx.filter)
+	case "G20": //Unit = inches
+		ctx.setScale(2.6)
+	case "G21": //Unit = MM
+		ctx.setScale(1.0)
+	case "G90": //Absolute Positioning
+		ctx.setRelative(false)
+	case "G91": //Reletive Posititoning
+		ctx.setRelative(true)
+	case "M0":  //Stop
 		tmp := make([]byte, 2)
 		tmp[0] = 1
 		tmp[1] = 5
 		return tmp
-	case "M1":
+	case "M1": //Sleep
 		tmp := make([]byte, 2)
 		tmp[0] = 1
 		tmp[1] = 6
 		return tmp
-	case "M3":
-		context.tubeOn = true
-		return compile([]string{"V", "A"}, 7, tokens, filter)
-	case "M5":
-		context.tubeOn = false
+	case "M3": //Tube On
+		ctx.tubeOn = true
+		return compile([]string{"V", "A"}, 7, tokens, ctx.filter)
+	case "M5": //Tube off
+		ctx.tubeOn = false
 		tmp := make([]byte, 2)
 		tmp[0] = 1
 		tmp[1] = 8
 		return tmp
-	case "M100":
+	case "M100": //Grab data
 		tmp := make([]byte, 2)
 		tmp[0] = 1
 		tmp[1] = 9
 		return tmp
-	case "M102":
+	case "M102": //Version
 		tmp := make([]byte, 2)
 		tmp[0] = 1
 		tmp[1] = 0
@@ -131,15 +130,15 @@ func execute(line string) []byte {
 	return nil
 }
 
-func setScale(scale float64) {
-	context.units = scale
+func (ctx *Scanner) setScale(scale float64) {
+	ctx.units = scale
 }
-func setRelative(relative bool) {
-	context.relative = relative
+func (ctx *Scanner) setRelative(relative bool) {
+	ctx.relative = relative
 }
 
 func compile(flags []string, code byte, tokens []string, filter map[string]func(string) (byte, byte, bool)) []byte {
-	args := Parse(tokens, flags)
+	args := parse(tokens, flags)
 	out := make([]byte, 2)
 
 	for i, arg := range args {
@@ -147,7 +146,7 @@ func compile(flags []string, code byte, tokens []string, filter map[string]func(
 		if set {
 			out = append(out, first, second)
 		}
-		out[1] += 1 << uint(IndexOf(i, flags))
+		out[1] += 1 << uint(indexOf(i, flags))
 	}
 
 	out[0] = byte(len(out) - 1)
@@ -156,7 +155,7 @@ func compile(flags []string, code byte, tokens []string, filter map[string]func(
 
 	return out
 }
-func Parse(tokens []string, flags []string) map[string]string {
+func parse(tokens []string, flags []string) map[string]string {
 	out := make(map[string]string)
 	for _, token := range tokens {
 		for _, flag := range flags {
@@ -167,7 +166,7 @@ func Parse(tokens []string, flags []string) map[string]string {
 	}
 	return out
 }
-func IndexOf(elem string, array []string) int {
+func indexOf(elem string, array []string) int {
 	for i, el := range array {
 		if el == elem {
 			return i
